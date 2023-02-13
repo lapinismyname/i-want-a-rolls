@@ -174,5 +174,5 @@ app = QtWidgets.QApplication(sys.argv)
 window = Window()
 sys.exit(app.exec())
 
-#i want a rollstools by lapin
+#i want a rolls by lapin
 #12.02.2023
