@@ -1,128 +1,178 @@
-import requests
-from bs4 import BeautifulSoup
-from lxml import etree
-import pandas as pd
+import sys
 import datetime
+from PySide6 import QtWidgets
+from PySide6 import QtCore
+import threading
+import rollsfuncs
 
-def extract(n): #this function is defined to make a proper search 
-    if not " " in n:
-        return str(n)
-    else:
-        k = ""
-        while n[0] != " ":
-            k += str(n[0])
-            n = n[1:]
-        return k + "-" + extract(n[1:])
+class Window(QtWidgets.QMainWindow):
+    def __init__(self):
+        QtWidgets.QMainWindow.__init__(self)
+        self.init_window()
 
-url = 'https://www.arabam.com/ikinci-el/'
-user_search = input()
-search = extract(user_search)
-document = requests.get(url + extract(search), headers = {'User-agent': 'your bot 0.1'}).text #accessing the website, converting it into a html document
-soup = BeautifulSoup(document, 'lxml') #cooking the soup
-link = soup.find("meta", {"property": "al:web:url"}).get("content")
+    def init_window(self):
+        self.setWindowTitle("i want a rolls")
+        self.resize(800, 400)
+        self.search_area = QtWidgets.QLineEdit()
+        self.search_area.setPlaceholderText("Enter your search here...")
+        self.search_button = QtWidgets.QPushButton("Search")
 
-#the page for the lowest price
-low_document = requests.get(link + '?sort=priceTl.asc', headers = {'user-agent': 'your bot 0.1'}).text
-low_soup = BeautifulSoup(low_document, 'lxml')
+        search_layout = QtWidgets.QHBoxLayout()
+        search_layout.addStretch()
+        search_layout.addWidget(self.search_area)
+        search_layout.addWidget(self.search_button)
+        search_layout.addStretch()
+        
+        self.search_progress = QtWidgets.QLabel() #searching text that is displayed while search progress is executing
+        progress_layout = QtWidgets.QHBoxLayout()
+        progress_layout.addStretch()
+        progress_layout.addWidget(self.search_progress)
+        progress_layout.addStretch()
+        progress_layout.addStretch()
 
-low_model = low_soup.find("h3", class_="crop-after") 
+        prologue_layout = QtWidgets.QVBoxLayout()
+        prologue_layout.addStretch()
+        prologue_layout.addLayout(search_layout)
+        prologue_layout.addLayout(progress_layout)
+        prologue_layout.addStretch()
 
-if low_model == None: #in case of wrong searches, print an error message
-    print("no results found, please make sure that all words are spelled correctly")
-    quit()
-else:
-    low_model = low_model.get_text()[1:-1]
+        central = QtWidgets.QWidget(self)
+        self.setCentralWidget(central)
+        central.setLayout(prologue_layout)  
+              
+        self.search_button.clicked.connect(self.progress)
+        
+        self.show() 
+        
+    def progress(self):  #display the 'searching' message at the execution time of the search 
+        startProgress = threading.Event() #start the thread
+        threadEvent = threading.Event()       
+        self.progressThread = Progress()
+        self.progressThread.startTheProgress(startProgress, threadEvent)
+        startProgress.set()
+        self.search_progress.setText('searching...')  
+        self.progressThread.finished.connect(self.search)     
+              
+    def search(self):
+        car = self.search_area.text()
+        self.results = rollsfuncs.car_search(car)
+        self.search_area.clear()
+        self.search_area.setPlaceholderText("Make another search...")
+        self.search_button = QtWidgets.QPushButton("Search")
+        time = "%s" % str(datetime.datetime.now())[:-10]
+        self.time = QtWidgets.QLabel("time: " + time)
+        location = 'Turkey' #set location, in case of future improvements
+        self.location = QtWidgets.QLabel("location: " + location)
+        
+        search_layout = QtWidgets.QHBoxLayout()
+        search_layout.addStretch()
+        search_layout.addWidget(self.search_area)
+        search_layout.addWidget(self.search_button)
+        search_layout.addStretch()
 
-low_listing, low_dom = low_soup.find("input", id="collect").prettify()[54:62], etree.HTML(str(low_soup))
-low_price = low_dom.xpath('//*[@id="listing' + low_listing + '"]/td[7]/div[1]/a/span')[0].text[26:-22] #using xpath to access
-low_year = low_dom.xpath('//*[@id="listing' + low_listing + '"]/td[4]/div[1]/a')[0].text
+        self.search_progress.setText('')
+        progress_layout = QtWidgets.QHBoxLayout()
+        progress_layout.addStretch()
+        progress_layout.addWidget(self.search_progress)
+        progress_layout.addStretch()
+        progress_layout.addStretch()
+        
+        if type(self.results) is str: #in case of an exhibition of the error message
+            self.last_results = QtWidgets.QLabel(self.results + '\n')
+            
+            final_layout = QtWidgets.QVBoxLayout()
+            final_layout.addLayout(search_layout)
+            final_layout.addLayout(progress_layout)
+            final_layout.addWidget(self.last_results)
+            final_layout.addWidget(self.time)
+            final_layout.addWidget(self.location)
+            final_layout.addStretch()
+            
+        else: #for the ordinary results
+            result_text = self.results[0]
+            dfs = rollsfuncs.result_table(self.results[1], self.results[2], self.results[3], self.results[4], self.results[5], self.results[6], self.results[7], self.results[8], self.results[9])
+        
+            self.last_results = QtWidgets.QLabel("results for " + "'" + car + "' " + result_text + '\n')        
+            self.table = QtWidgets.QTableView()
+            self.model = PandasModel(dfs) #display the dataframe in a proper way
+            self.table.setModel(self.model)
+            #equalize the cell sizes to each other
+            hheader = self.table.horizontalHeader()
+            hheader.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            hheader.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            hheader.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            hheader.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            vheader = self.table.verticalHeader()
+            vheader.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            vheader.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            vheader.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
 
-#the page for the highest price
-high_document = requests.get(link + '?sort=priceTl.desc', headers = {'User-agent': 'your bot 0.1'}).text #the page for the highest price
-high_soup = BeautifulSoup(high_document, 'lxml')
+            final_layout = QtWidgets.QVBoxLayout()
+            final_layout.addLayout(search_layout)
+            final_layout.addLayout(progress_layout)
+            final_layout.addWidget(self.last_results)
+            final_layout.addWidget(self.table)
+            final_layout.addWidget(self.time)
+            final_layout.addWidget(self.location)
+            final_layout.addStretch()
 
-high_model = high_soup.find("h3", class_="crop-after").get_text()[1:-1]
-high_listing, high_dom = high_soup.find("input", id="collect").prettify()[54:62], etree.HTML(str(high_soup))
-high_price = high_dom.xpath('//*[@id="listing' + high_listing + '"]/td[7]/div[1]/a/span')[0].text[26:-22] #using xpath to access
-high_year = high_dom.xpath('//*[@id="listing' + high_listing + '"]/td[4]/div[1]/a')[0].text
+        central = QtWidgets.QWidget(self)
+        self.setCentralWidget(central)
+        central.setLayout(final_layout)
 
-#the xpath's of kilometers are a bit different for vans, so determine whether the search was a van or not
-if "minivan" in link:
-    low_km = low_dom.xpath('//*[@id="listing' + low_listing + '"]/td[6]/div[1]/a')[0].text[:-1]
-    high_km = high_dom.xpath('//*[@id="listing' + high_listing + '"]/td[6]/div[1]/a')[0].text[:-1]   
-else:
-    low_km = low_dom.xpath('//*[@id="listing' + low_listing + '"]/td[5]/div[1]/a')[0].text[:-1]
-    high_km = high_dom.xpath('//*[@id="listing' + high_listing + '"]/td[5]/div[1]/a')[0].text[:-1]
+        self.search_button.clicked.connect(self.progress)
+           
+class Progress(QtCore.QThread): #the thread
+    def __init__(self):
+        QtCore.QThread.__init__(self)
+        self.exit = False
+        self.initSuccessEvent = None
+        self.startProgress = None
+        
+    def stopThread(self):
+        self.exit = True
+        self.wait()
 
-def extract_price(n): #this function is defined to convert the price into an integer (ex: extract_price('250.000 TL') returns 250000)
-    k = ""
-    for i in n:
-        if i != ".":
-            k += i
-        elif i == " ":
-            break
-    return int(k[:-3])
+    def startTheProgress(self, startProgress, initSuccessEvent):
+        self.initSuccessEvent = initSuccessEvent
+        self.startProgress = startProgress
+        self.start()
 
-#accumulate results for the first page to forge an average price
-page, number, total = 0, 0, 0
-page += 1
-next_page = link + '?take=50' #we want the page to display 50 elements per page)
-new_document = requests.get(next_page, headers = {'User-agent': 'your bot 0.1'}).text #BeautifulSoup phase
-new_soup = BeautifulSoup(new_document, 'lxml')
-dom = etree.HTML(str(new_soup))
-prices = new_soup.find_all("span", class_="db no-wrap listing-price")
-for i in range(len(prices)):
-    price = prices[i].get_text()[26:-22]
-    price = extract_price(price)
-    total += price
-    number += 1
+    def run(self):
+        self.startProgress.wait()
+        self.initSuccessEvent.set()  
+        
+class PandasModel(QtCore.QAbstractTableModel):
+    def __init__(self, data):
+        QtCore.QAbstractTableModel.__init__(self)
+        self._data = data
 
-while dom.xpath('//*[@id="pagingNext"]/svg'): #continue until the next page button is clickable
-    page += 1
-    next_page = link + '?take=50&page=' + str(page)
-    new_document = requests.get(next_page, headers = {'User-agent': 'your bot 0.1'}).text
-    new_soup = BeautifulSoup(new_document, 'lxml')
-    dom = etree.HTML(str(new_soup))
-    prices = new_soup.find_all("span", class_="db no-wrap listing-price")
-    for i in range(len(prices)):
-        price = prices[i].get_text()[26:-22]
-        price = extract_price(price)
-        total += price
-        number += 1
-average = total / number
+    def rowCount(self, parent=None):
+        return self._data.shape[0]
 
-def dotter(n): #this function is defined to convert an integer to be represented in decimal notation (ex: extract_price('250000') returns 250.000)
-    k = ""
-    digit_count = 1
-    digits = len(str(n))
-    for i in str(n)[::-1]:
-        digits -= 1
-        if digits == 0:
-            return (k + i)[::-1]
-        elif digit_count == 3:
-            k = k + i + "."
-            digit_count = 1
-        else:
-            k += i
-            digit_count += 1
-    return k[::-1]
+    def columnCount(self, parent=None):
+        return self._data.shape[1]
 
-#result table
-if number == 1:
-    result_text = "results(over 1 result):"
-else:
-    result_text = "results(over " + str(number) + " results):"
+    def data(self, index, role):
+        if role == QtCore.Qt.DisplayRole:
+            value = self._data.iloc[index.row(), index.column()]
+            return str(value)
+        if role == QtCore.Qt.TextAlignmentRole:
+            value = self._data.iloc[index.row(), index.column()]
+            return QtCore.Qt.AlignVCenter + QtCore.Qt.AlignRight
 
-dfs = pd.DataFrame(
-        {
-            "": ["lowest price", "highest price", "average price"],
-            "price": [low_price, high_price, dotter(int(average)) + ' TL'],
-            "year": [low_year, high_year, ""],
-            "km": [low_km, high_km, ""],
-            "model": [low_model, high_model, ""]
-            }
-        ,index = [1, 2, 3])
+    def headerData(self, section, orientation, role):
+        #section is the index of the column/row
+        if role == QtCore.Qt.DisplayRole:
+            if orientation == QtCore.Qt.Horizontal:
+                return str(self._data.columns[section])
 
-print("", result_text, dfs, "", sep='\n')
-print("time:", "%s" % str(datetime.datetime.now())[:-10])
-print("location: Turkey")
+            if orientation == QtCore.Qt.Vertical:
+                return str(self._data.index[section])
+
+app = QtWidgets.QApplication(sys.argv)
+window = Window()
+sys.exit(app.exec())
+
+#i want a rolls by lapin
+#12.02.2023
