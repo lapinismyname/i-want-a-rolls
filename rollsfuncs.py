@@ -1,7 +1,7 @@
 import requests
-from bs4 import BeautifulSoup
-from lxml import etree
+import lxml.html as lh
 import pandas as pd
+from threading import Thread
 
 def extract(n): #this function is defined to make a proper search 
     if not " " in n:
@@ -48,69 +48,56 @@ def dotter(n): #this function is defined to convert an integer to be represented
             digit_count += 1
     return k[::-1]
     
+def undotter(n):
+    k = ""
+    for i in n:
+        if i == ".":
+            continue
+        else:
+            k += i
+    return int(k)
+    
+def page_search(link, page, car_list):
+    link = link + '?take=50&page=' + str(page) #we want the page to display 50 elements per page
+    page = requests.get(link, headers = {'User-agent': 'your bot 0.1'}) #accessing the link
+    document = lh.fromstring(page.content) #parsing
+    listings = document.find_class("listing-list-item pr") #get the list of attributes of the listings
+    price_list = document.find_class("listing-price") #get the list of prices of the listings
+    for j in range(len(listings)): #extract the information of attributes and prices to put them in a proper list
+        price = extract_price(price_list[j].text_content()[26:-22])
+        year = listings[j][3].text_content()[24:-26]
+        if "minivan" in link: #the site displays results in a different way for vans
+            km = listings[j][5].text_content()[40:-51]
+        else:
+            km = listings[j][4].text_content()[40:-51]
+        model = listings[j][1].text_content()[24:-36]
+        car_list.append([price, year, km, model])
+    
 def car_search(user_search):
     url = 'https://www.arabam.com/ikinci-el/'
-    search = extract(user_search)
-    document = requests.get(url + extract(search), headers = {'User-agent': 'your bot 0.1'}).text #accessing the website, converting it into a html document
-    soup = BeautifulSoup(document, 'lxml') #cooking the soup    
-    link = soup.find("meta", {"property": "al:web:url"}).get("content") #reaching the raw link to use it later 
-
-    car_list = []
-    null = ""
-    #accumulate results for the first page
-    page = 1
-    next_page = link + '?take=50' #we want the page to display 50 elements per page)
-    new_document = requests.get(next_page, headers = {'User-agent': 'your bot 0.1'}).text #BeautifulSoup phase
-    new_soup = BeautifulSoup(new_document, 'lxml')
-    price_list = new_soup.find_all("span", class_="db no-wrap listing-price")
+    link = url + extract(user_search)
+    page = requests.get(link, headers = {'User-agent': 'your bot 0.1'}) #accessing the website, converting it into an html document
+    document = lh.fromstring(page.content) #parsing
+    advert_number = document.get_element_by_id("js-hook-for-advert-count").text_content() #find how many adverts in the search
     
-    if not price_list: #error message
+    if not eval(advert_number): #error message
         return "no results found for '" + user_search + "', please make sure that all words are spelled correctly"
 
-    dom = etree.HTML(str(new_soup))
-    id_list = []
-    ids = eval(new_soup.find("input", id="collect").get('value'))
-    for i in ids:
-        id_list += [i["advertId"]]
-    model_list = new_soup.find_all("h3", class_="crop-after")
+    pages = undotter(advert_number) // 50 + 1
+    if (pages > 1):
+        link = document.xpath("//meta[@property='al:web:url']/@content")[0] #reaching the raw link to use it later
+        if pages > 50:
+            pages = 50
 
-    for j in range(len(price_list)):
-        price = price_list[j].get_text()[26:-22]
-        price = extract_price(price)
-        year = dom.xpath('//*[@id="listing' + str(id_list[j]) + '"]/td[4]/div[1]/a')[0].text 
-        if "minivan" in link: #the site displays results in a different way for vans
-            km = dom.xpath('//*[@id="listing' + str(id_list[j]) + '"]/td[6]/div[1]/a')[0].text[:-1]  
-        else:
-            km = dom.xpath('//*[@id="listing' + str(id_list[j]) + '"]/td[5]/div[1]/a')[0].text[:-1]
-        model = model_list[j].get_text()[1:-1]
-        car_list.append([price, year, km, model])
+    car_list = []
+    threads = []
+    #using threads to send requests and parse the html documents concurrently
+    for i in range(pages):
+        threads.append(Thread(target=page_search, args=[link, i+1, car_list], daemon=True))
+        threads[i].start()
+    for i in range(pages):
+        threads[i].join()
 
-    while dom.xpath('//*[@id="pagingNext"]/svg'): #continue accumulation until the next page button is clickable
-        page += 1
-        next_page = link + '?take=50&page=' + str(page) 
-        new_document = requests.get(next_page, headers = {'User-agent': 'your bot 0.1'}).text 
-        new_soup = BeautifulSoup(new_document, 'lxml')
-        price_list = new_soup.find_all("span", class_="db no-wrap listing-price")
-
-        dom = etree.HTML(str(new_soup))
-
-        id_list = []
-        ids = eval(new_soup.find("input", id="collect").get('value'))
-        for i in ids:
-            id_list += [i["advertId"]]
-        model_list = new_soup.find_all("h3", class_="crop-after")
-
-        for j in range(len(price_list)):
-            price = price_list[j].get_text()[26:-22]
-            price = extract_price(price)
-            year = dom.xpath('//*[@id="listing' + str(id_list[j]) + '"]/td[4]/div[1]/a')[0].text 
-            if "minivan" in link:
-                km = dom.xpath('//*[@id="listing' + str(id_list[j]) + '"]/td[6]/div[1]/a')[0].text[:-1]  
-            else:
-                km = dom.xpath('//*[@id="listing' + str(id_list[j]) + '"]/td[5]/div[1]/a')[0].text[:-1]
-            model = model_list[j].get_text()[1:-1]
-            car_list.append([price, year, km, model])
-    
     sorted_list = bubble_sort(car_list) #sort the prices to clean out outliers
     length = len(sorted_list)
     if length//2: #split the list into half to clean out left and right outliers
@@ -118,10 +105,10 @@ def car_search(user_search):
         second_half = new_second_half = sorted_list[length//2:][::-1]
         for f in range(len(first_half) - 1):
             if first_half[f][0] * 5/2 <= first_half[f + 1][0]:
-                new_first_half = new_first_half[1:]     
+                new_first_half = first_half[f+1:]
         for s in range(len(second_half) - 1):
             if second_half[s][0] >= second_half[s + 1][0] * 5/2:
-                new_second_half = new_second_half[1:]           
+                new_second_half = second_half[s+1:]           
         sorted_list = new_first_half + new_second_half[::-1]
     low_price, low_year, low_km, low_model = sorted_list[0][0], sorted_list[0][1], sorted_list[0][2], sorted_list[0][3]
     high_price, high_year, high_km, high_model = sorted_list[-1][0], sorted_list[-1][1], sorted_list[-1][2], sorted_list[-1][3]
@@ -133,8 +120,8 @@ def car_search(user_search):
         result_text = " (over 1 result):"
     else:
         result_text = " (over " + str(number) + " results):"
-            
-    return [result_text, low_price, low_year, low_km, low_model, high_price, high_year, high_km, high_model, average]
+
+    return [result_text, low_price, low_year, low_km, low_model, high_price, high_year, high_km, high_model, average]             
         
 def result_table(low_price, low_year, low_km, low_model, high_price, high_year, high_km, high_model, average): #return results with pandas
     dfs = pd.DataFrame(
