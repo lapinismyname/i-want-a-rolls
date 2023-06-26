@@ -9,7 +9,6 @@ In case of spelling mistakes in user searches, an immediate error message will b
 
 To run the program, one might want to install the modules first, if they're not already installed. To do this, run the commands below on your terminal:
 ```
-$ pip install beautifulsoup4
 $ pip install lxml
 $ pip install pandas
 $ pip install PySide6
